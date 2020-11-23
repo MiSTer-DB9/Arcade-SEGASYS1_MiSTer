@@ -174,6 +174,8 @@ wire  [7:0] ioctl_dout;
 
 wire [15:0] joy1_USB, joy2_USB;
 wire [15:0] joy = joy1 | joy2;
+wire  [8:0] spinner_0, spinner_1;
+wire [24:0] ps2_mouse;
 
 wire [21:0]	gamma_bus;
 
@@ -234,13 +236,15 @@ hps_io #(.STRLEN($size(CONF_STR)>>3)) hps_io
 	.ioctl_dout(ioctl_dout),
 	.ioctl_index(ioctl_index),
 
+	.ps2_mouse(ps2_mouse),
 	.joystick_0(joy1_USB),
 	.joystick_1(joy2_USB),
-
+	.spinner_0(spinner_0),
+	.spinner_1(spinner_1),
 	.joy_raw(joydb_1[5:0] | joydb_2[5:0])
 );
 
-reg [7:0] SYSMODE;	// [0]=SYS1/SYS2,[1]=H/V,[2]=H256/H240,[3]=water match control
+reg [7:0] SYSMODE;	// [0]=SYS1/SYS2,[1]=H/V,[2]=H256/H240,[3]=water match control,[4]=CW/CCW,[5]=spinner
 reg [7:0] DSW[8];
 always @(posedge clk_sys) begin
 	if (ioctl_wr) begin
@@ -304,7 +308,7 @@ arcade_video #(288,8) arcade_video
 assign {FB_PAL_CLK, FB_FORCE_BLANK, FB_PAL_ADDR, FB_PAL_DOUT, FB_PAL_WR} = '0;
  
 wire no_rotate = screen_H;
-wire rotate_ccw = 1;
+wire rotate_ccw = ~SYSMODE[4];
 screen_rotate screen_rotate (.*);
 
 wire			PCLK_EN;
@@ -314,7 +318,7 @@ HVGEN hvgen
 (
 	.HPOS(HPOS),
 	.VPOS(VPOS),
-	.CLK(clk_48M),
+	.CLK(clk_sys),
 	.PCLK_EN(PCLK_EN),
 	.iRGB(POUT),
 	.oRGB({b,g,r}),
@@ -339,9 +343,14 @@ assign AUDIO_S = 0; // unsigned PCM
 
 wire iRST = RESET | status[0] | buttons[1];
 
-wire [7:0] INP0, INP1, INP2;
-always_comb begin
-	if (SYSMODE[3]) begin
+reg [7:0] INP0, INP1, INP2;
+always @(posedge clk_sys) begin
+	if (SYSMODE[5]) begin
+		INP0 = ~spin;
+		INP1 = ~spin;
+		INP2 = ~{m_trig_1 || ps2_mouse[2:0], m_trig_1 || ps2_mouse[2:0], m_start2, m_start1, 3'b000, m_coin};
+	end
+	else if (SYSMODE[3]) begin
 		INP0 = ~{m_lleft, m_lright, m_lup, m_ldown, m_rleft, m_rright, m_rup, m_rdown};
 		INP1 = ~{m_lleft, m_lright, m_lup, m_ldown, m_rleft, m_rright, m_rup, m_rdown};
 		INP2 = ~{m_trig, m_trig, m_start2, m_start1, 3'b000, m_coin};
@@ -353,9 +362,35 @@ always_comb begin
 	end
 end
 
+wire [7:0] spin;
+spinner #(15,25,5) spinner
+(
+	.clk(clk_sys),
+	.reset(iRST),
+	.minus(m_left),
+	.plus(m_right),
+	.fast(m_trig_2),
+	.strobe(vs),
+	.spin1_in(use_mouse ? {ps2_mouse[24],ps2_mouse[15:8]} : spinner_0),
+	.spin2_in(spinner_1),
+	.spin_out(spin)
+);
+
+reg use_mouse = 0;
+always @(posedge clk_sys) begin
+	reg old_ms;
+	reg old_sp;
+	
+	old_ms <= ps2_mouse[24];
+	if(old_ms ^ ps2_mouse[24]) use_mouse = 1;
+	
+	old_sp <= spinner_0[8];
+	if(old_sp ^ spinner_0[8]) use_mouse = 0;
+end
+
 SEGASYSTEM1 GameCore
 ( 
-	.clk48M(clk_48M),
+	.clk48M(clk_sys),
 	.reset(iRST),
 
 	.INP0(INP0),
