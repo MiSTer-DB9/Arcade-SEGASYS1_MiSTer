@@ -73,7 +73,8 @@ module emu
 	input         CLK_AUDIO, // 24.576 MHz
 	output [15:0] AUDIO_L,
 	output [15:0] AUDIO_R,
-	output        AUDIO_S,    // 1 - signed audio samples, 0 - unsigned
+	output        AUDIO_S,   // 1 - signed audio samples, 0 - unsigned
+	output  [1:0] AUDIO_MIX, // 0 - no mix, 1 - 25%, 2 - 50%, 3 - 100% (mono)
 
 	//High latency DDR3 RAM interface
 	//Use for non-critical time purposes
@@ -110,6 +111,7 @@ assign       USER_OUT  = JOY_FLAG[2] ? {3'b111,JOY_SPLIT,3'b111,JOY_MDSEL} : JOY
 assign       USER_MODE = JOY_FLAG[2:1] ;
 assign       USER_OSD  = joydb_1[10] & joydb_1[6];
 
+assign AUDIO_MIX = 0;
 assign LED_USER  = ioctl_download;
 assign LED_DISK  = 0;
 assign LED_POWER = 0;
@@ -137,8 +139,8 @@ localparam CONF_STR = {
 	"oT,UserIO Players, 1 Player,2 Players;",
 	"-;",
 	"R0,Reset;",
-	"J1,Trig1,Trig2,Trig3,Trig4,Trig5,Start 1P,Start 2P,Coin;",
-	"jn,A,B,X,,,Start,Select,R;",
+	"J1,Trig1,Trig2,Trig3,Trig4,Trig5,Start 1P,Start 2P,Coin,Pause;",
+	"jn,A,B,X,,,Start,Select,R,L;",
 	"V,v",`BUILD_DATE
 };
 
@@ -162,22 +164,26 @@ pll pll
 ///////////////////////////////////////////////////
 
 wire [63:0] status;
-wire  [1:0] buttons;
-wire        forced_scandoubler;
-wire			direct_video;
+wire	[1:0]		buttons;
+wire				forced_scandoubler;
+wire				direct_video;
 
-wire        ioctl_download;
-wire        ioctl_wr;
-wire  [7:0]	ioctl_index;
-wire [24:0] ioctl_addr;
-wire  [7:0] ioctl_dout;
+wire				ioctl_download;
+wire				ioctl_upload;
+wire				ioctl_wr;
+wire	[7:0]		ioctl_index;
+wire	[24:0]	ioctl_addr;
+wire	[7:0]		ioctl_dout;
+wire	[7:0]		ioctl_din;
 
 wire [15:0] joy1_USB, joy2_USB;
-wire [15:0] joy = joy1 | joy2;
-wire  [8:0] spinner_0, spinner_1;
-wire [24:0] ps2_mouse;
+wire	[15:0]	joy = joy1 | joy2;
+wire	[8:0]		spinner_0, spinner_1;
+wire	[24:0]	ps2_mouse;
 
-wire [21:0]	gamma_bus;
+reg 				pause;
+
+wire	[21:0]	gamma_bus;
 
 // CO S2 S1 F3 F2 F1 U D L R 
 wire [31:0] joy1 = joydb_1ena ? {joydb_1[11]|(joydb_1[10]&joydb_1[5]),joydb_1[9],joydb_1[10],joydb_1[8:0]} : joy1_USB;
@@ -231,9 +237,11 @@ hps_io #(.STRLEN($size(CONF_STR)>>3)) hps_io
 	.direct_video(direct_video),
 
 	.ioctl_download(ioctl_download),
+	.ioctl_upload(ioctl_upload),
 	.ioctl_wr(ioctl_wr),
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_dout),
+	.ioctl_din(ioctl_din),
 	.ioctl_index(ioctl_index),
 
 	.ps2_mouse(ps2_mouse),
@@ -244,7 +252,7 @@ hps_io #(.STRLEN($size(CONF_STR)>>3)) hps_io
 	.joy_raw(joydb_1[5:0] | joydb_2[5:0])
 );
 
-reg [7:0] SYSMODE;	// [0]=SYS1/SYS2,[1]=H/V,[2]=H256/H240,[3]=water match control,[4]=CW/CCW,[5]=spinner
+reg [7:0] SYSMODE;	// [0]=SYS1/SYS2,[1]=H/V,[2]=H256/H240,[3]=water match control,[4]=CW/CCW,[5]=spinner,[6] HS start delay for TeddyBoy Blues (27 seconds!)
 reg [7:0] DSW[8];
 always @(posedge clk_sys) begin
 	if (ioctl_wr) begin
@@ -274,6 +282,14 @@ wire m_trig_3 = joy[6];
 wire m_start1 = joy[9];
 wire m_start2 = joy[10];
 wire m_coin   = joy[11];
+wire m_pause  = joy[12];
+
+reg pause_toggle = 1'b0;
+always @(posedge clk_sys) begin
+    reg old_pause;
+    old_pause <= m_pause;
+    if(~old_pause & m_pause) pause_toggle <= ~pause_toggle;
+end
 
 ///////////////////////////////////////////////////
 
@@ -408,7 +424,40 @@ SEGASYSTEM1 GameCore
 	.ROMCL(clk_sys),
 	.ROMAD(ioctl_addr),
 	.ROMDT(ioctl_dout),
-	.ROMEN(ioctl_wr & (ioctl_index==0))
+	.ROMEN(ioctl_wr & (ioctl_index==0)),
+	
+	.PAUSE_N(~pause),
+	.HSAD(ram_address),
+	.HSDO(ioctl_din),
+	.HSDI(hiscore_to_ram),
+	.HSWE(hiscore_write)
+
 );
+
+
+wire [15:0]ram_address;
+wire [7:0]hiscore_to_ram;
+wire hiscore_write;
+wire hiscore_pause;
+
+assign pause = hiscore_pause || pause_toggle;
+
+hiscore #(16) hi (
+	.clk(clk_sys),
+	.reset(iRST),
+	.delay(SYSMODE[6] ? 31'h4D3F6400 : 1'b0),
+	.ioctl_upload(ioctl_upload),
+	.ioctl_download(ioctl_download),
+	.ioctl_wr(ioctl_wr),
+	.ioctl_addr(ioctl_addr),
+	.ioctl_dout(ioctl_dout),
+	.ioctl_din(ioctl_din),
+	.ioctl_index(ioctl_index),
+	.ram_address(ram_address),
+	.data_to_ram(hiscore_to_ram),
+	.ram_write(hiscore_write),
+	.pause(hiscore_pause)
+);
+
 
 endmodule
