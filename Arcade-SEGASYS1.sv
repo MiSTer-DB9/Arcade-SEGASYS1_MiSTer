@@ -151,11 +151,11 @@ module emu
 	// 1 - D-/TX
 	// 2..6 - USR2..USR6
 	// Set USER_OUT to 1 to read from USER_IN.
-	output	USER_OSD,
+	output			USER_OSD,
 	output	[1:0] USER_MODE,
-	input	[7:0] USER_IN,
-	output	[7:0] USER_OUT	
-	input         OSD_STATUS
+	input		[7:0] USER_IN,
+	output	[7:0] USER_OUT,	
+	input         	OSD_STATUS
 );
 
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
