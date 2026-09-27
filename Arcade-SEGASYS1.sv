@@ -14,7 +14,7 @@ module emu
 	input         RESET,
 
 	//Must be passed to hps_io module
-	inout  [48:0] HPS_BUS,
+	inout  [45:0] HPS_BUS,
 
 	//Base video clock. Usually equals to CLK_SYS.
 	output        CLK_VIDEO,
@@ -42,6 +42,8 @@ module emu
 	input  [11:0] HDMI_WIDTH,
 	input  [11:0] HDMI_HEIGHT,
 	output        HDMI_FREEZE,
+	output        HDMI_BLACKOUT,
+	output        HDMI_BOB_DEINT,
 
 `ifdef MISTER_FB
 	// Use framebuffer in DDRAM
@@ -272,6 +274,7 @@ localparam CONF_STR = {
 	"-;",
 	"H0OEF,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"H0O6,Orientation,Vert,Horz;", 
+	"OI,Flip Screen,Off,On;",
 	"O35,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
 	"O7,Pause when OSD is open,On,Off;",
 	"-;",
@@ -353,7 +356,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.buttons(buttons),
 
 	.status(status),
-	.status_menumask({SYSMODE[3], direct_video}),
+	.status_menumask({screen_H, SYSMODE[3], direct_video}),
 	.video_rotated(video_rotated),
 
 	.forced_scandoubler(forced_scandoubler),
@@ -476,7 +479,6 @@ arcade_video #(288,8) arcade_video
 	.fx(status[5:3])
 );
 
-
 wire no_rotate = screen_H;
 wire rotate_ccw = ~SYSMODE[4];
 wire flip = 0;
@@ -573,6 +575,7 @@ SEGASYSTEM1 GameCore
 
 	.PH(HPOS),
 	.PV(VPOS),
+	.VFLP(status[18]),
 	.PCLK_EN(PCLK_EN),
 	.POUT(POUT),
 	.SOUT(AOUT),
